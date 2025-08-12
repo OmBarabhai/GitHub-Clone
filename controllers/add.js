@@ -1,28 +1,28 @@
 const fs = require("fs").promises;
 const path = require("path");
-
 const { supabase } = require("../supabaseClient");
 
 async function addRepo(argv) {
   try {
-    // 1. Read the file content (create dummy if not exist)
     const fileToAdd = path.resolve(process.cwd(), argv.file);
-    let content;
+    const fileName = path.basename(fileToAdd);
+
+    let contentBuffer;
     try {
-      content = await fs.readFile(fileToAdd, "utf-8");
+      contentBuffer = await fs.readFile(fileToAdd); // buffer for both text & binary
     } catch {
-      console.warn(`⚠️ File not found. Creating a dummy file content.`);
-      content = "This is a dummy file for testing.\n";
+      console.warn(`⚠️ File not found. Creating dummy file.`);
+      contentBuffer = Buffer.from("This is a dummy file for testing.\n", "utf-8");
     }
 
-    // 2. Read repo ID from config file
+    const contentBase64 = contentBuffer.toString("base64");
+
     const configPath = path.resolve(process.cwd(), ".apnaGit", "config.json");
     let config;
     try {
-      const configRaw = await fs.readFile(configPath, "utf-8");
-      config = JSON.parse(configRaw);
+      config = JSON.parse(await fs.readFile(configPath, "utf-8"));
     } catch {
-      console.error("❌ Could not read repository config. Have you run 'init'?");
+      console.error("❌ Could not read repository config. Run 'init' first.");
       return;
     }
 
@@ -32,23 +32,23 @@ async function addRepo(argv) {
       return;
     }
 
-    // 3. Insert or update staged file in Supabase
-    const { data, error } = await supabase
-      .from("staged_files")
-      .upsert({
-        repo_id,
-        file_name: path.basename(argv.file),
-        file_path: argv.file,
-        content,
-        staged_at: new Date().toISOString(),
-      }, { onConflict: ["repo_id", "file_path"] });
+    const relativePath = path.relative(process.cwd(), fileToAdd).replace(/\\/g, "/");
+
+    const { error } = await supabase.from("staged_files").upsert({
+      repo_id,
+      file_name: fileName,
+      file_path: relativePath,
+      content_base64: contentBase64,
+      encoding: "base64",
+      staged_at: new Date().toISOString()
+    }, { onConflict: ["repo_id", "file_path"] });
 
     if (error) {
-      console.error("❌ Error adding file to staging in Supabase:", error.message);
+      console.error("❌ Error adding file:", error.message);
       return;
     }
 
-    console.log(`✅ Added '${argv.file}' to staging area in Supabase.`);
+    console.log(`✅ Added '${relativePath}' to staging area.`);
   } catch (err) {
     console.error("❌ Unexpected error:", err.message);
   }

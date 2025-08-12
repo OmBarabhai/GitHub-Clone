@@ -16,33 +16,37 @@ async function pullRepo() {
       return;
     }
 
-    // 2. Fetch all commits from Supabase for this repo
+    // 2. Fetch all commits from Supabase
     const { data: commits, error: commitsError } = await supabase
       .from("commits")
       .select("*")
-      .eq("repository_id", repositoryId);
+      .eq("repository_id", repositoryId)
+      .order("created_at", { ascending: true });
 
     if (commitsError) {
       console.error("❌ Error fetching commits:", commitsError.message);
       return;
     }
-
     if (!commits || commits.length === 0) {
       console.log("⚠️ No commits found in remote repository.");
       return;
     }
 
-    // 3. For each commit, fetch staged files or commit files associated
+    // 3. Process each commit
     for (const commit of commits) {
       const commitFolder = path.join(commitsPath, commit.id);
+      await fs.rm(commitFolder, { recursive: true, force: true });
       await fs.mkdir(commitFolder, { recursive: true });
 
       // Save commit message
-      await fs.writeFile(path.join(commitFolder, "message.txt"), commit.message);
+      await fs.writeFile(
+        path.join(commitFolder, "message.txt"),
+        commit.message || ""
+      );
 
-      // Fetch files for this commit from supabase (assuming you have a commit_files or staged_files table)
+      // Fetch commit files
       const { data: files, error: filesError } = await supabase
-        .from("commit_files")  // or your files table
+        .from("commit_files")
         .select("*")
         .eq("commit_id", commit.id);
 
@@ -51,14 +55,30 @@ async function pullRepo() {
         continue;
       }
 
-      // Write each file locally
+      // Write files
       for (const file of files) {
-        const filePath = path.join(commitFolder, file.file_name);
-        await fs.writeFile(filePath, file.content);
+        // Skip internal files
+        if (file.file_path.startsWith(".apnaGit")) continue;
+
+        const destPath = path.join(commitFolder, file.file_path);
+        await fs.mkdir(path.dirname(destPath), { recursive: true });
+
+        let fileBuffer;
+        if (file.encoding === "base64") {
+          // Decode binary/text from Base64
+          fileBuffer = Buffer.from(file.content, "base64");
+        } else {
+          // Assume UTF-8 text if encoding not set
+          fileBuffer = Buffer.from(file.content, "utf-8");
+        }
+
+        await fs.writeFile(destPath, fileBuffer);
       }
+
+      console.log(`✅ Pulled commit ${commit.id}`);
     }
 
-    console.log("✅ Pulled all commits from remote Supabase.");
+    console.log("🎉 Finished pulling all commits from remote Supabase.");
   } catch (err) {
     console.error("❌ Error pulling from remote:", err.message);
   }

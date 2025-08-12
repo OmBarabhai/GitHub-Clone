@@ -5,37 +5,59 @@ const { supabase } = require("../supabaseClient");
 async function initRepo() {
   const repoPath = path.resolve(process.cwd(), ".apnaGit");
   const commitsPath = path.join(repoPath, "commits");
+  const configPath = path.join(repoPath, "config.json");
 
   try {
-    // If repo already exists locally, stop
+    // Check if local config exists
     try {
-      await fs.access(repoPath);
-      console.log("Repository already exists at:", repoPath);
+      await fs.access(configPath);
+      const configRaw = await fs.readFile(configPath, "utf-8");
+      const config = JSON.parse(configRaw);
+      console.log("✅ Repository already exists at:", repoPath);
+      console.log(`🆔 Repository ID: ${config.repositoryId}`);
       return;
-    } catch (err) {
-      // Folder doesn't exist, continue
+    } catch {
+      // Local config missing — continue
     }
 
-    // Step 1: Create repo record in Supabase
-    const repoName = path.basename(process.cwd()); // folder name as repo name
-    const { data, error } = await supabase
+    const repoName = path.basename(process.cwd());
+    let repositoryId;
+
+    // Check if repo exists in Supabase
+    const { data: existingRepo, error: fetchError } = await supabase
       .from("repositories")
-      .insert([{ name: repoName }])
       .select("id")
-      .single();
+      .eq("name", repoName)
+      .maybeSingle();
 
-    if (error) {
-      console.error("❌ Error creating repository in Supabase:", error.message);
+    if (fetchError) {
+      console.error("❌ Error checking existing repositories:", fetchError.message);
       return;
     }
 
-    const repositoryId = data.id;
+    if (existingRepo) {
+      repositoryId = existingRepo.id;
+      console.log("🔁 Using existing repository in Supabase");
+    } else {
+      // Create repo if not found
+      const { data, error: createError } = await supabase
+        .from("repositories")
+        .insert([{ name: repoName }])
+        .select("id")
+        .single();
 
-    // Step 2: Create local repo folders
+      if (createError) {
+        console.error("❌ Error creating repository in Supabase:", createError.message);
+        return;
+      }
+      repositoryId = data.id;
+    }
+
+    // Always create local repo folders
     await fs.mkdir(repoPath, { recursive: true });
     await fs.mkdir(commitsPath, { recursive: true });
 
-    // Step 3: Write config.json with repoId + bucket name
+    // Write config.json
     const bucketName = process.env.S3_BUCKET || "default-bucket";
     const configData = {
       bucket: bucketName,
@@ -43,17 +65,14 @@ async function initRepo() {
       created: new Date().toISOString()
     };
 
-    await fs.writeFile(
-      path.join(repoPath, "config.json"),
-      JSON.stringify(configData, null, 2)
-    );
+    await fs.writeFile(configPath, JSON.stringify(configData, null, 2));
 
-    console.log(`✅ Repository initialised at: ${repoPath}`);
+    console.log(`✅ Repository initialized at: ${repoPath}`);
     console.log(`🆔 Repository ID: ${repositoryId}`);
     console.log("📦 Config file created with bucket:", bucketName);
 
   } catch (err) {
-    console.error("❌ Error initialising repository:", err.message);
+    console.error("❌ Error initializing repository:", err.message);
   }
 }
 
