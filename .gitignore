@@ -1,3 +1,10 @@
+<<<<<<< HEAD
 node_modules
 .env
 .apnaGit
+=======
+node_modules/
+.env
+.apnaGit
+
+>>>>>>> 48da0a5a7529bbbf533d2d4a1cfd799b61334a92
