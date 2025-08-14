@@ -1,15 +1,15 @@
-// Load .env file
-const path = require('path');
-require('dotenv').config({ path: path.resolve(__dirname, '.env') });
+const path = require("path");
+require("dotenv").config({ path: path.resolve(__dirname, ".env") });
 
 const express = require("express");
-const cors = require("cors"); // Fixed typo: "core" -> "cors"
+const cors = require("cors");
 const http = require("http");
 const { Server } = require("socket.io");
-const mainRouter = require("./routes/main.router"); // Correct path
-
 const yargs = require("yargs");
 const { hideBin } = require("yargs/helpers");
+
+// Import routers
+const mainRouter = require("./routes/main.router");
 
 // Import controllers
 const { initRepo } = require("./controllers/init");
@@ -18,11 +18,8 @@ const { commitRepo } = require("./controllers/commit");
 const { pushRepo } = require("./controllers/push");
 const { pullRepo } = require("./controllers/pull");
 const { revertRepo } = require("./controllers/revert");
-const { logRepo } = require("./controllers/log");
-const userController = require("./controllers/userController");
-
-// Import Supabase client
-const { supabase } = require("./supabaseClient");
+const { getCommitLogs } = require("./controllers/log");
+const { supabase } = require("./config/supabaseClient");
 
 // Create Express app
 const app = express();
@@ -31,29 +28,15 @@ const server = http.createServer(app);
 // Middleware
 app.use(cors({ origin: "*" }));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 app.use("/", mainRouter);
-
-// Commit history endpoint (outside startServer)
-app.get("/commits", async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from("commits")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (error) throw error;
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
 
 // Socket.IO setup
 const io = new Server(server, {
   cors: {
     origin: "*",
-    methods: ["GET", "POST"]
-  }
+    methods: ["GET", "POST"],
+  },
 });
 
 io.on("connection", (socket) => {
@@ -74,63 +57,82 @@ io.on("connection", (socket) => {
   });
 });
 
+// API endpoint to fetch commit logs
+app.get("/api/logs", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("commits")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+
+    console.table(data);
+    res.json({ message: "Commit logs fetched successfully", data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Start server function
 function startServer() {
   const PORT = process.env.PORT || 5000;
-  const supabaseUrl = process.env.SUPABASE_URL;
-
   server.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
-    if (supabaseUrl) {
-      console.log(`🔗 Supabase URL: ${supabaseUrl}`);
-    } else {
-      console.error("❌ SUPABASE_URL environment variable is not set!");
-    }
   });
 }
 
-// CLI setup
+// CLI commands
 yargs(hideBin(process.argv))
-  .command("start", "Start a new server", {}, startServer)
-  .command("init", "Initialise a new repository", {}, initRepo)
-  .command("add <file>", "Add a file to the repository", (yargs) => {
-    yargs.positional("file", {
-      describe: "File to add to the staging area",
-      type: "string",
-    });
-  }, addRepo)
-  .command("commit <message>", "Commit staged changes", (yargs) => {
-    yargs.positional("message", {
-      describe: "Commit message",
-      type: "string",
-    });
-  }, commitRepo)
+  .command("start", "Start the server", {}, startServer)
+  .command("init", "Initialize a new repository", {}, initRepo)
+  .command(
+    "add <file>",
+    "Add a file to the repository",
+    (yargs) => {
+      yargs.positional("file", {
+        describe: "File to add to staging",
+        type: "string",
+      });
+    },
+    addRepo
+  )
+  .command(
+    "commit <message>",
+    "Commit staged changes",
+    (yargs) => {
+      yargs.positional("message", {
+        describe: "Commit message",
+        type: "string",
+      });
+    },
+    commitRepo
+  )
   .command("push", "Push changes to remote repository", {}, pushRepo)
   .command("pull", "Pull latest changes from remote repository", {}, pullRepo)
-  .command("revert <commitId>", "Revert to a specific commit", (yargs) => {
-    yargs.positional("commitId", {
-      describe: "ID of commit to revert",
-      type: "string",
-    });
-  }, revertRepo)
-  .command("log", "Show commit history", {}, logRepo)
-  .command("fetch-users", "Get all users from Supabase", {}, async () => {
-    const { data, error } = await supabase.from("users").select("*");
-    if (error) console.error("Error fetching users:", error.message);
-    else console.table(data);
-  })
-  .command("add-user <first> <last> <email>", "Add a user to Supabase", (yargs) => {
-    yargs
-      .positional("first", { describe: "First name", type: "string" })
-      .positional("last", { describe: "Last name", type: "string" })
-      .positional("email", { describe: "Email address", type: "string" });
-  }, async (argv) => {
-    const { data, error } = await supabase
-      .from("users")
-      .insert([{ first_name: argv.first, last_name: argv.last, email: argv.email }])
-      .select();
-    if (error) console.error("Error adding user:", error.message);
-    else console.log("✅ User added successfully:", data);
+  .command(
+    "revert <commitId>",
+    "Revert to a specific commit",
+    (yargs) => {
+      yargs.positional("commitId", {
+        describe: "ID of commit to revert",
+        type: "string",
+      });
+    },
+    revertRepo
+  )
+  .command("log", "Show commit history", {}, async () => {
+    try {
+      const { data, error } = await supabase
+        .from("commits")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+
+      console.log("📜 Commit Logs:");
+      console.table(data);
+    } catch (err) {
+      console.error("Error fetching commit logs:", err.message);
+    }
   })
   .demandCommand(1, "You need at least one command")
   .help()

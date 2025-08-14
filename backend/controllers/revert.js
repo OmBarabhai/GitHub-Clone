@@ -1,74 +1,68 @@
 const fs = require("fs").promises;
 const path = require("path");
 
-async function revertRepo({ commitId }) {
+async function revertRepo(argv) {
   try {
     const repoPath = path.resolve(process.cwd(), ".apnaGit");
-    const commitsPath = path.join(repoPath, "commits");
-    const commitPath = path.join(commitsPath, commitId);
+    const commitPath = path.join(repoPath, "commits", argv.commitId);
 
-    // 1. Check if local repo exists
-    try {
-      await fs.access(repoPath);
-    } catch {
-      console.error("❌ No repository found. Run 'init' first.");
-      return;
-    }
-
-    // 2. Check if commit exists
+    // 1. Verify commit exists
     try {
       await fs.access(commitPath);
     } catch {
-      console.error(`❌ Commit ${commitId} not found.`);
-      return;
+      throw new Error(`Commit not found: ${argv.commitId}`);
     }
 
-    // 3. Show commit message
-    try {
-      const messagePath = path.join(commitPath, "message.txt");
-      const message = await fs.readFile(messagePath, "utf-8");
-      console.log(`📜 Commit message: ${message.trim()}`);
-    } catch {
-      console.log("⚠ No commit message found.");
-    }
+    // 2. Gather commit files
+    const commitFiles = [];
 
-    // 4. Remove all files/folders in current directory except .apnaGit
-    async function clearWorkingDirectory(dir) {
+    async function listFiles(dir) {
       const entries = await fs.readdir(dir, { withFileTypes: true });
       for (const entry of entries) {
-        if (entry.name === ".apnaGit") continue;
-        const entryPath = path.join(dir, entry.name);
-        await fs.rm(entryPath, { recursive: true, force: true });
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          await listFiles(fullPath);
+        } else if (entry.isFile() && entry.name !== "message.txt") {
+          const relativePath = path.relative(commitPath, fullPath);
+          commitFiles.push(relativePath);
+        }
       }
     }
-    await clearWorkingDirectory(process.cwd());
 
-    // 5. Recursively restore all files from that commit
+    await listFiles(commitPath);
 
-async function restoreDir(srcDir, destDir) {
-  const entries = await fs.readdir(srcDir, { withFileTypes: true });
-  for (const entry of entries) {
-    const srcPath = path.join(srcDir, entry.name);
-    const destPath = path.join(destDir, entry.name);
+    // 3. Preview files to restore
+    console.log(`⚠️ The following files will be restored from commit ${argv.commitId}:`);
+    commitFiles.forEach(file => console.log(`  ↩️ ${file}`));
 
-    if (entry.isDirectory()) {
-      await fs.mkdir(destPath, { recursive: true });
-      await restoreDir(srcPath, destPath);
-    } else if (entry.isFile() && entry.name !== "message.txt") {
-      // Read as raw buffer, not UTF-8 string
-      const buffer = await fs.readFile(srcPath);
-      await fs.mkdir(path.dirname(destPath), { recursive: true });
-      await fs.writeFile(destPath, buffer);
-    }
-  }
-}
+    // 4. Ask for confirmation
+    const readline = require("readline").createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
 
+    readline.question("Do you want to proceed? (yes/no) ", async (answer) => {
+      readline.close();
+      if (answer.toLowerCase() !== "yes") {
+        console.log("❌ Revert cancelled by user.");
+        process.exit(0);
+      }
 
-    await restoreDir(commitPath, process.cwd());
+      // 5. Restore files safely
+      for (const file of commitFiles) {
+        const src = path.join(commitPath, file);
+        const dest = path.join(process.cwd(), file);
 
-    console.log(`⏪ Successfully reverted to commit ${commitId}`);
- } catch (err) {
-    console.error("❌ Error reverting to commit:", err.message);
+        await fs.mkdir(path.dirname(dest), { recursive: true });
+        await fs.copyFile(src, dest);
+        console.log(`✅ Restored: ${file}`);
+      }
+
+      console.log(`🎉 Revert to commit ${argv.commitId} completed safely!`);
+    });
+  } catch (err) {
+    console.error("❌ Revert failed:", err.message);
+    process.exit(1);
   }
 }
 

@@ -1,12 +1,21 @@
+// routes/main.router.js
+
 const express = require("express");
-const userRouter = require("./userRouter"); // Capital "R"
+const router = express.Router();
 
-const mainRouter = express.Router();
+// Import all sub-routers
+const userRouter = require("./user.router");
+const repoRouter = require("./repo.router");
+const issueRouter = require("./issue.router");
 
-mainRouter.use("/api/users", userRouter);
+// Mount routers
+router.use("/users", userRouter);
+router.use("/repos", repoRouter);
+router.use("/issues", issueRouter);
 
-mainRouter.get("/", (req, res) => {
-  res.send("ApnaGit Server is running!");
+// Root route
+router.get("/", (req, res) => {
+  res.json({ message: "API is running!" });
 });
 
-module.exports = mainRouter;
+module.exports = router;

@@ -1,4 +1,4 @@
-const { supabase } = require("../supabaseClient");
+const { supabase, supabaseAdmin } = require("../config/supabaseClient");
 
 // Create a new user
 async function createUser(username, email, password) {
@@ -48,5 +48,5 @@ module.exports = {
   createUser,
   getUserByUsername,
   followUser,
-  starRepository
+  starRepository,
 };

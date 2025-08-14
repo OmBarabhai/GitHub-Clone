@@ -1,6 +1,6 @@
 const fs = require("fs").promises;
 const path = require("path");
-const { supabase } = require("../supabaseClient");
+const { supabase } = require("../config/supabaseClient");
 
 async function commitRepo(argv) {
   try {
@@ -11,19 +11,14 @@ async function commitRepo(argv) {
     try {
       await fs.access(repoPath);
     } catch {
-      console.error("❌ No repository found. Run 'node index.js init' first.");
+      console.error("❌ No repository found. Run 'init' first.");
       return;
     }
 
     // 2. Read repo ID
-    let config;
-    try {
-      config = JSON.parse(await fs.readFile(path.join(repoPath, "config.json"), "utf-8"));
-    } catch {
-      console.error("❌ Could not read repository config. Have you run 'init'?");
-      return;
-    }
-
+    const config = JSON.parse(
+      await fs.readFile(path.join(repoPath, "config.json"), "utf-8")
+    );
     const repositoryId = config.repositoryId;
     if (!repositoryId) {
       console.error("❌ Repository ID missing in config.json");
@@ -36,11 +31,7 @@ async function commitRepo(argv) {
       .select("*")
       .eq("repo_id", repositoryId);
 
-    if (fetchError) {
-      console.error("❌ Error fetching staged files:", fetchError.message);
-      return;
-    }
-
+    if (fetchError) throw fetchError;
     if (!stagedFiles?.length) {
       console.warn("⚠️ No files in staging area. Nothing to commit.");
       return;
@@ -53,71 +44,42 @@ async function commitRepo(argv) {
       .select("id")
       .single();
 
-    if (commitError) {
-      console.error("❌ Error inserting commit in Supabase:", commitError.message);
-      return;
-    }
-
+    if (commitError) throw commitError;
     const commitId = commitData.id;
 
     // 5. Create commit folder locally
     const commitFolder = path.join(commitsPath, commitId);
     await fs.mkdir(commitFolder, { recursive: true });
-
-    // Save commit message locally
     await fs.writeFile(path.join(commitFolder, "message.txt"), argv.message);
 
-    // 6. Detect actual commit_files schema
-    const { data: schemaData, error: schemaError } = await supabase
-      .rpc("get_table_columns", { table_name: "commit_files" }); // ✅ You'll need this Postgres function
-
-    if (schemaError) {
-      console.error("❌ Could not fetch commit_files schema:", schemaError.message);
-      return;
-    }
-
-    const commitFilesCols = schemaData.map(col => col.column_name);
-
-    // 7. Save files locally + insert into commit_files
+    // 6. Save files locally + insert into commit_files
     for (const file of stagedFiles) {
       const decodedBuffer = Buffer.from(file.content_base64, "base64");
-      const filePath = path.join(commitFolder, file.file_path);
-
+      
+      // WINDOWS PATH FIX: Use split('/') for cross-platform compatibility
+      const filePath = path.join(commitFolder, ...file.file_path.split('/'));
+      
       await fs.mkdir(path.dirname(filePath), { recursive: true });
       await fs.writeFile(filePath, decodedBuffer);
 
-      // Prepare insert object only with existing DB columns
-      const insertObj = { commit_id: commitId };
-
-      if (commitFilesCols.includes("file_name")) insertObj.file_name = file.file_name || path.basename(file.file_path);
-      if (commitFilesCols.includes("file_path")) insertObj.file_path = file.file_path;
-      if (commitFilesCols.includes("content_base64")) insertObj.content_base64 = file.content_base64;
-      if (commitFilesCols.includes("content")) insertObj.content = file.content_base64;
-      if (commitFilesCols.includes("encoding")) insertObj.encoding = file.encoding || "base64";
-
-      const { error: fileInsertError } = await supabase
-        .from("commit_files")
-        .insert([insertObj]);
-
-      if (fileInsertError) {
-        console.error(`❌ Error inserting file ${file.file_path}:`, fileInsertError.message);
-      }
+      // Insert into commit_files
+      await supabase.from("commit_files").insert({
+        commit_id: commitId,
+        file_path: file.file_path,
+        file_name: file.file_name,
+        content: file.content_base64,
+        encoding: "base64"
+      });
     }
 
-    // 8. Clear staging area
-    const { error: deleteError } = await supabase
+    // 7. Clear staging area
+    await supabase
       .from("staged_files")
       .delete()
       .eq("repo_id", repositoryId);
 
-    if (deleteError) {
-      console.error("❌ Error clearing staged files:", deleteError.message);
-      return;
-    }
-
     console.log(`✅ Commit created: ${commitId}`);
     console.log(`📜 Message: ${argv.message}`);
-
   } catch (err) {
     console.error("❌ Error during commit:", err.message);
   }

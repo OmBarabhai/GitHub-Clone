@@ -1,4 +1,4 @@
-const { supabase } = require("../supabaseClient");
+const { supabase, supabaseAdmin } = require("../config/supabaseClient");
 
 // Create a new repository
 async function createRepository(ownerId, name) {
@@ -38,5 +38,5 @@ async function getRepositoryById(repoId) {
 module.exports = {
   createRepository,
   getRepositoriesByOwner,
-  getRepositoryById
+  getRepositoryById,
 };
