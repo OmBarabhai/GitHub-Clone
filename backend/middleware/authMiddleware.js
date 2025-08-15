@@ -1,59 +1,65 @@
-// middleware/authMiddleware.js
-
 const jwt = require("jsonwebtoken");
-const { supabase, supabaseAdmin } = require("../config/supabaseClient");
+const { supabase } = require("../config/supabaseClient");
 
 const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret";
 
-// ✅ Middleware to authenticate JWT and attach user to req
+// Authentication middleware
 const authenticate = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
-
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return res.status(401).json({ error: "Unauthorized: No token provided" });
+      return res.status(401).json({ error: "Authentication token required" });
     }
-
+    
     const token = authHeader.split(" ")[1];
     const decoded = jwt.verify(token, JWT_SECRET);
+    
+    // Verify user exists in database
+    const { data: user, error } = await supabase
+      .from("users")
+      .select("id, role")
+      .eq("id", decoded.id)
+      .single();
 
-    // Attach user info to request
+    if (error || !user) {
+      return res.status(401).json({ error: "Invalid authentication token" });
+    }
+
+    // Attach user to request
     req.user = {
-      id: decoded.id,
-      email: decoded.email,
-      role: decoded.role, // admin or user
+      id: user.id,
+      role: user.role
     };
-
-    // Optional: attach Supabase client for current user
-    req.supabase = supabase;
-
+    
     next();
   } catch (err) {
-    return res.status(401).json({ error: "Unauthorized: Invalid token" });
+    res.status(401).json({ error: "Invalid or expired token" });
   }
 };
 
-// ✅ Middleware to check if user is self or admin
+// Authorization middleware (self or admin)
 const authorizeSelfOrAdmin = (req, res, next) => {
-  const isSelf = req.user && req.user.id == req.params.id;
-  const isAdmin = req.user && req.user.role === "admin";
-
+  const isSelf = req.user.id === req.params.id;
+  const isAdmin = req.user.role === "admin";
+  
   if (!isSelf && !isAdmin) {
-    return res.status(403).json({ error: "Access denied" });
+    return res.status(403).json({ error: "Forbidden" });
   }
   next();
 };
 
-// ✅ Middleware to check if user is owner or admin for any entity
+// Generic owner/admin authorization
 const authorizeOwnerOrAdmin = (getOwnerId) => {
   return async (req, res, next) => {
     try {
       const ownerId = await getOwnerId(req);
-
-      if (req.user.id !== ownerId && req.user.role !== "admin") {
-        return res.status(403).json({ error: "Access denied" });
+      const isOwner = req.user.id === ownerId;
+      const isAdmin = req.user.role === "admin";
+      
+      if (!isOwner && !isAdmin) {
+        return res.status(403).json({ error: "Forbidden" });
       }
-
+      
       next();
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -64,5 +70,5 @@ const authorizeOwnerOrAdmin = (getOwnerId) => {
 module.exports = {
   authenticate,
   authorizeSelfOrAdmin,
-  authorizeOwnerOrAdmin,
+  authorizeOwnerOrAdmin
 };

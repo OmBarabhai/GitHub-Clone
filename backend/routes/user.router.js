@@ -1,19 +1,15 @@
-// routes/user.router.js
 const express = require("express");
 const router = express.Router();
 const userController = require("../controllers/userController");
-const { authenticate, authorizeSelfOrAdmin } = require("../middleware/authMiddleware");
+const { authenticateToken, authorizeSelfOrAdmin } = require("../middleware/auth");
 
-// Get all users (admin only)
-router.get("/", authenticate, userController.getAllUsers);
+router.get("/", authenticateToken, userController.getAllUsers);
+router.get("/:id", authenticateToken, userController.getUserById);
+router.post("/", userController.createUser);
+router.put("/:id", authenticateToken, authorizeSelfOrAdmin, userController.updateUser);
+router.delete("/:id", authenticateToken, authorizeSelfOrAdmin, userController.deleteUser);
 
-// Get single user
-router.get("/:id", authenticate, authorizeSelfOrAdmin, userController.getUserProfile);
-
-// Update user
-router.put("/:id", authenticate, authorizeSelfOrAdmin, userController.updateUserProfile);
-
-// Delete user
-router.delete("/:id", authenticate, authorizeSelfOrAdmin, userController.deleteUserProfile);
+// Add login route
+router.post('/login', userController.loginUser);
 
 module.exports = router;
